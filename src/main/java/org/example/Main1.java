@@ -1,13 +1,15 @@
 package org.example;
 
+
 import lombok.extern.log4j.Log4j2;
 
-import java.util.*;
-
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import static java.util.Arrays.asList;
 
 @Log4j2
-public class Main {
+public class Main1 {
     public static void main(String[] args) {
         List<Block> initialBlocks = new ArrayList<>();
         for (int i = 0; i < 10_000; i++) {

@@ -2,16 +2,29 @@ package org.example;
 
 import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
+import org.example.collection.BoundedQueue;
+import org.example.collection.Queue;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 @Log4j2
 @Getter
 public class Warehouse extends Thread {
 
+    private final int truckCount = 10;
+
+    private int fabricStorageIndex = 0;
+
     private final List<Block> storage = new ArrayList<>();
+
+    // Для реализации паттерна Producer-Consumer используем очередь фиксированной длины, так как число грузовиков известно заранее
+    private final Queue<Truck> trucks = new BoundedQueue<>(truckCount);
+
+    private final Lock lock = new ReentrantLock();
 
     public Warehouse(String name) {
         super(name);
@@ -43,6 +56,10 @@ public class Warehouse extends Thread {
             } else {
                 unloadTruck(truck);
             }
+            // Отпускаем грузовик после погрузки/разгрузки
+            synchronized (truck) {
+                truck.notifyAll();
+            }
         }
         log.info("Warehouse thread interrupted");
 
@@ -61,24 +78,33 @@ public class Warehouse extends Thread {
     }
 
     private Collection<Block> getFreeBlocks(int maxItems) {
-        //TODO необходимо реализовать потокобезопасную логику по получению свободных блоков
-        //TODO 1 блок грузится в 1 грузовик, нельзя клонировать блоки во время загрузки
         List<Block> blocks = new ArrayList<>();
-        for (int i = 0; i < maxItems; i++) {
-            blocks.add(new Block());
+        // Блокирую всю коллекцию на время погрузки
+        lock.lock();
+        try {
+            int left = fabricStorageIndex;
+            int right = fabricStorageIndex + maxItems;
+            for (int i = left; i < right; i++) {
+                blocks.add(storage.get(i));
+                // Сдвигаю указатель на очередной блок
+                fabricStorageIndex++;
+            }
+        } finally {
+            lock.unlock();
         }
         return blocks;
     }
 
-    private void returnBlocksToStorage(List<Block> returnedBlocks) {
-        //TODO реализовать потокобезопасную логику по возврату блоков на склад
+    private synchronized void returnBlocksToStorage(List<Block> returnedBlocks) {
+        // Блокирую всю коллекцию на время разгрузки
+        storage.addAll(returnedBlocks);
     }
 
     private void unloadTruck(Truck truck) {
         log.info("Unloading truck {}", truck.getName());
         List<Block> arrivedBlocks = truck.getBlocks();
         try {
-            sleep(100L * arrivedBlocks.size());
+            sleep(10L * arrivedBlocks.size());
         } catch (InterruptedException e) {
             log.error("Interrupted while unloading truck", e);
         }
@@ -88,13 +114,19 @@ public class Warehouse extends Thread {
     }
 
     private Truck getNextArrivedTruck() {
-        //TODO необходимо реализовать логику по получению следующего прибывшего грузовика внутри потока склада
-        return null;
+        // Берем очередной грузовик из очереди для погрузки/разгрузки
+        return trucks.deq();
     }
 
-
     public void arrive(Truck truck) {
-        //TODO необходимо реализовать логику по сообщению потоку склада о том, что грузовик приехал
-        //TODO так же дождаться разгрузки блоков, при возврате из этого метода - грузовик покинет склад
+        try {
+            trucks.enq(truck);
+            synchronized (truck) {
+                // ждем пока погрузят/разгрузят блоки
+                truck.wait();
+            }
+        } catch (InterruptedException e) {
+            throw new RuntimeException();
+        }
     }
 }
